@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ArcadeStrike</title>
+  <meta name="description" content="1v1 Web3 PvP Fighting Game" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a0f; overflow: hidden; font-family: 'Courier New', monospace; }
+    #game-container { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+    #ui-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      pointer-events: none; z-index: 100;
+    }
+    .ui-panel {
+      pointer-events: all;
+      background: rgba(0,0,0,0.85);
+      border: 1px solid #00ff88;
+      border-radius: 8px;
+      padding: 16px;
+      color: #fff;
+    }
+    #wallet-panel {
+      position: fixed; top: 16px; right: 16px;
+      pointer-events: all;
+    }
+  </style>
+</head>
+<body>
+  <div id="game-container"></div>
+  <div id="ui-overlay">
+    <div id="wallet-panel" class="ui-panel" style="display:none"></div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

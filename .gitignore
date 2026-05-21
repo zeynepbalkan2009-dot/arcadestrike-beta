@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+out/
+artifacts/
+cache/
+
+# Environment variables — NEVER COMMIT THESE
+.env
+.env.local
+.env.*.local
+apps/server/.env
+apps/client/.env
+packages/contracts/.env
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pino-*.log
+
+# Colyseus dev artifacts
+.colyseus/
+
+# TypeScript incremental build
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Hardhat
+typechain-types/
