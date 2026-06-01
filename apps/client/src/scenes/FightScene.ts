@@ -16,6 +16,17 @@ import { ClientPredictor } from "../game/ClientPredictor";
 import { HUD } from "../ui/HUD";
 import { FighterSprite } from "../game/FighterSprite";
 import { FXManager } from "../game/FXManager";
+import { AudioManager } from "../game/AudioManager";
+import {
+  DEFAULT_ARENA_ID,
+  DEFAULT_FIGHTER_ID,
+  SELECTED_ARENA_KEY,
+  SELECTED_FIGHTER_KEY,
+  getArena,
+  getFighter,
+  type ArenaId,
+  type FighterId,
+} from "../game/CanonContent";
 
 export class FightScene extends Phaser.Scene {
   // Systems
@@ -24,11 +35,14 @@ export class FightScene extends Phaser.Scene {
   private predictor!: ClientPredictor;
   private hud!: HUD;
   private fx!: FXManager;
+  private audio!: AudioManager;
 
   // Game objects
   private fighters = new Map<string, FighterSprite>();
   private myPlayerId = "";
   private matchPayload!: MatchFoundPayload;
+  private selectedFighter: FighterId = DEFAULT_FIGHTER_ID;
+  private selectedArena: ArenaId = DEFAULT_ARENA_ID;
 
   // State
   private serverState: GameState | null = null;
@@ -44,15 +58,38 @@ export class FightScene extends Phaser.Scene {
   private comboHits = 0;
   private comboResetTimer?: Phaser.Time.TimerEvent;
   private koShown = false;
+  private mobileControls?: Phaser.GameObjects.Container;
+  private unsubscribeNetwork: Array<() => void> = [];
+  private lastCountdownSecond: number | null = null;
+  private isShuttingDown = false;
+  private visibilityHandler?: () => void;
 
   constructor() { super({ key: "FightScene" }); }
 
   init(data: any): void {
     this.matchPayload = data.matchPayload;
+    this.selectedFighter =
+      data.queueData?.fighterId ||
+      localStorage.getItem(SELECTED_FIGHTER_KEY) as FighterId ||
+      DEFAULT_FIGHTER_ID;
+    this.selectedArena =
+      data.queueData?.arenaId ||
+      localStorage.getItem(SELECTED_ARENA_KEY) as ArenaId ||
+      DEFAULT_ARENA_ID;
   }
 
   async create(): Promise<void> {
     this.network = NetworkManager.getInstance();
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.shutdown());
+    this.visibilityHandler = () => {
+      if (document.hidden) {
+        this.inputManager?.clearAllTouch();
+        this.hud?.showReconnectBanner("TAB PAUSED");
+      } else {
+        this.hud?.hideReconnectBanner();
+      }
+    };
+    document.addEventListener("visibilitychange", this.visibilityHandler);
 
     // Draw arena
     this.drawArena();
@@ -62,14 +99,25 @@ export class FightScene extends Phaser.Scene {
     this.predictor = new ClientPredictor();
     this.hud      = new HUD(this);
     this.fx       = new FXManager(this);
+    this.audio    = new AudioManager(this);
+    this.fx.playBGM();
+    this.mountMobileControls();
+    if (this.matchPayload?.wagerAmount) this.hud.setWager(this.matchPayload.wagerAmount);
 
     // Register network handlers
-    this.network.on("STATE_SNAPSHOT", (s: any) => this.onSnapshot(s));
-    this.network.on("STATE_DELTA",    (d: any) => this.onDelta(d));
-    this.network.on("MATCH_END",      (p: MatchEndPayload) => this.onMatchEnd(p));
-    this.network.on("ROUND_END",      (p: any) => this.onRoundEnd(p));
-    this.network.on("INPUT_ACK",      (p: any) => this.predictor.acknowledge(p.seq));
-    this.network.on("REMATCH_START",  () => this.scene.restart());
+    this.unsubscribeNetwork = [
+      this.network.on("STATE_SNAPSHOT", (s: any) => this.onSnapshot(s)),
+      this.network.on("STATE_DELTA",    (d: any) => this.onDelta(d)),
+      this.network.on("MATCH_END",      (p: MatchEndPayload) => this.onMatchEnd(p)),
+      this.network.on("ROUND_END",      (p: any) => this.onRoundEnd(p)),
+      this.network.on("INPUT_ACK",      (p: any) => this.predictor.acknowledge(p.seq)),
+      this.network.on("REMATCH_START",  () => this.scene.restart()),
+      this.network.on("LATENCY",        ({ latencyMs }: any) => this.hud.setLatency(latencyMs)),
+      this.network.on("DISCONNECTED",   () => this.hud.setConnectionStatus(false)),
+      this.network.on("RECONNECTING",   ({ attempt }: any) => this.hud.showReconnectBanner(`RECONNECTING ${attempt}/8`)),
+      this.network.on("STATE_SNAPSHOT", () => this.hud.setConnectionStatus(true)),
+      this.network.on("REMATCH_DECLINED", () => this.showPhaseText("REMATCH DECLINED")),
+    ];
 
     // Get our player ID from the network session
     this.myPlayerId = this.network.getPlayerId();
@@ -93,6 +141,8 @@ export class FightScene extends Phaser.Scene {
     // Update HUD
     if (this.serverState) {
       this.hud.update(this.serverState, this.myPlayerId);
+      const mine = this.serverState.fighters[this.myPlayerId];
+      this.audio.setLowHealthTension(Boolean(mine && mine.hp > 0 && mine.hp <= C.MAX_HP * 0.25));
     }
   }
 
@@ -116,6 +166,7 @@ export class FightScene extends Phaser.Scene {
     // Send every simulation tick; the server tick rate and anti-cheat limit are aligned at 20Hz.
     this.network.sendInput(msg);
     this.predictor.pushInput(msg);
+    this.inputManager.clearMomentary();
   }
 
   // ─── Server State Handling ──────────────────────────────────
@@ -170,6 +221,7 @@ export class FightScene extends Phaser.Scene {
       if (performance.now() >= this.hitstopUntil) {
         sprite.setPosition(render.pos.x, render.pos.y);
         sprite.updateAnimation(render.actionState, render.facing);
+        sprite.updateReadiness(render.attackCooldown <= 0, render.specialCooldown <= 0);
       }
 
       // Hit flash effect
@@ -182,8 +234,10 @@ export class FightScene extends Phaser.Scene {
   }
 
   private spawnFighter(playerId: string, state: FighterState, isLocal: boolean): void {
-    const texture = isLocal ? "fighter_p1" : "fighter_p2";
-    const sprite = new FighterSprite(this, state.pos.x, state.pos.y, texture, playerId, isLocal);
+    const opponentId = this.selectedFighter === "sokak-krali" ? "golge-danscisi" : "sokak-krali";
+    const fighterId = isLocal ? this.selectedFighter : opponentId;
+    const texture = `fighter_${fighterId}`;
+    const sprite = new FighterSprite(this, state.pos.x, state.pos.y, texture, playerId, isLocal, getFighter(fighterId));
     this.fighters.set(playerId, sprite);
     this.predictor.initFighter(playerId, state);
   }
@@ -212,10 +266,12 @@ export class FightScene extends Phaser.Scene {
 
     if (fighter.actionState === "attacking" && previousAction !== "attacking") {
       sprite.playAnticipation("attack");
+      if (playerId === this.myPlayerId) this.audio.playUI();
     }
     if (fighter.actionState === "special" && previousAction !== "special") {
       sprite.playAnticipation("special");
-      this.fx.spawnSpecialFX(fighter.pos.x, fighter.pos.y);
+      this.fx.spawnSpecialFX(fighter.pos.x, fighter.pos.y, sprite.accentColor);
+      this.audio.playSpecial();
     }
   }
 
@@ -227,9 +283,10 @@ export class FightScene extends Phaser.Scene {
 
     this.hitstopUntil = Math.max(this.hitstopUntil, performance.now() + hitstopMs);
     this.fx.hitStop(hitstopMs);
-    this.fx.spawnHitFX(target.pos.x, target.pos.y, isCombo);
+    this.fx.spawnHitFX(target.pos.x, target.pos.y, isCombo, sprite?.accentColor);
     this.fx.spawnDamageNumber(target.pos.x, target.pos.y, damage, isCombo, isHeavy);
     this.fx.playHit(isCombo);
+    this.audio.playHit(isCombo, isHeavy);
 
     if (sprite) {
       sprite.flashHit();
@@ -256,12 +313,16 @@ export class FightScene extends Phaser.Scene {
     if (target.hp <= 0 && !this.koShown) {
       this.koShown = true;
       this.fx.playKO();
+      this.audio.playKO();
       this.fx.spawnKOFX(target.pos.x, target.pos.y);
       this.fx.showKOText(this.scale.width / 2, this.scale.height / 2);
       this.fx.showFinishOverlay(targetId !== this.myPlayerId);
       sprite?.playDeathAnim();
       this.fx.screenShake(360, 0.018);
     }
+
+    const mine = this.serverState?.fighters[this.myPlayerId];
+    this.audio.setLowHealthTension(Boolean(mine && mine.hp > 0 && mine.hp <= C.MAX_HP * 0.25));
   }
 
   // ─── Phase UI ────────────────────────────────────────────────
@@ -276,6 +337,7 @@ export class FightScene extends Phaser.Scene {
         break;
       }
       case "fighting":
+        this.lastCountdownSecond = null;
         this.hideCountdown();
         break;
       case "round_end":
@@ -288,6 +350,7 @@ export class FightScene extends Phaser.Scene {
   }
 
   private showCountdown(seconds: number): void {
+    const clamped = Math.max(0, seconds);
     if (!this.countdownText) {
       this.countdownText = this.add.text(
         this.scale.width / 2, this.scale.height / 2,
@@ -296,16 +359,18 @@ export class FightScene extends Phaser.Scene {
           stroke: "#000", strokeThickness: 6 }
       ).setOrigin(0.5).setDepth(200);
     }
-    this.countdownText.setText(seconds > 0 ? seconds.toString() : "FIGHT!");
+    this.countdownText.setText(clamped > 0 ? clamped.toString() : "FIGHT!");
     this.countdownText.setScale(1);
-    if (seconds === 0) {
+    if (this.lastCountdownSecond === clamped) return;
+    this.lastCountdownSecond = clamped;
+    if (clamped === 0) {
       this.tweens.add({
         targets: this.countdownText, scale: 2, alpha: 0,
         duration: 800, onComplete: () => this.countdownText?.destroy()
       });
-      this.sound.play("countdown_beep", { rate: 1.5 });
+      this.audio.playCountdown(1.5);
     } else {
-      this.sound.play("countdown_beep");
+      this.audio.playCountdown();
     }
   }
 
@@ -336,6 +401,8 @@ export class FightScene extends Phaser.Scene {
   }
 
   private onMatchEnd(payload: MatchEndPayload): void {
+    this.fx.stopBGM();
+    this.audio.setLowHealthTension(false);
     this.time.delayedCall(1500, () => {
       this.scene.start("ResultScene", {
         result: payload,
@@ -348,19 +415,78 @@ export class FightScene extends Phaser.Scene {
 
   private drawArena(): void {
     const { width, height } = this.scale;
+    const arena = getArena(this.selectedArena);
 
     // Background
-    try {
-      this.add.image(width / 2, height / 2, "arena_bg").setDisplaySize(width, height);
-    } catch {
-      this.add.rectangle(0, 0, width, height, 0x0a0a1a).setOrigin(0);
-    }
+    this.add.image(width / 2, height / 2, `arena_${arena.id}`).setDisplaySize(width, height);
+    this.add.rectangle(0, 0, width, height, 0x050511, 0.18).setOrigin(0);
+    this.drawArenaAtmosphere(arena);
 
     // Platform/ground
     const g = this.add.graphics();
-    g.fillStyle(0x1a1a2e, 1);
+    g.fillStyle(arena.palette.floor, 0.96);
     g.fillRect(0, C.GROUND_Y + C.FIGHTER_HEIGHT / 2, width, height - C.GROUND_Y);
-    g.lineStyle(3, 0x00ff88, 0.8);
+    g.lineStyle(3, arena.palette.neonA, 0.9);
     g.lineBetween(0, C.GROUND_Y + C.FIGHTER_HEIGHT / 2, width, C.GROUND_Y + C.FIGHTER_HEIGHT / 2);
+  }
+
+  private drawArenaAtmosphere(arena: ReturnType<typeof getArena>): void {
+    const { width, height } = this.scale;
+    for (let i = 0; i < 18; i++) {
+      const color = i % 2 ? arena.palette.neonA : arena.palette.neonB;
+      const dot = this.add.circle((i * 97) % width, 96 + ((i * 41) % 220), 1 + (i % 3), color, 0.28)
+        .setDepth(1);
+      this.tweens.add({
+        targets: dot,
+        y: dot.y - 18 - (i % 5) * 4,
+        alpha: 0.05,
+        yoyo: true,
+        repeat: -1,
+        duration: 1600 + i * 90,
+        ease: "Sine.InOut",
+      });
+    }
+
+    const sign = this.add.text(width / 2, 78, arena.name.toUpperCase(), {
+      fontSize: "18px",
+      color: "#ffffff",
+      fontFamily: "Courier New",
+      stroke: "#000000",
+      strokeThickness: 5,
+    }).setOrigin(0.5).setDepth(2).setAlpha(0.78);
+    this.tweens.add({
+      targets: sign,
+      alpha: 0.38,
+      yoyo: true,
+      repeat: -1,
+      duration: 740,
+      ease: "Stepped",
+    });
+  }
+
+  private mountMobileControls(): void {
+    const isTouch = this.sys.game.device.input.touch;
+    if (!isTouch && this.scale.width > 700) return;
+    this.mobileControls = this.inputManager.createMobileControls(this);
+    this.scale.on("resize", this.positionMobileControls, this);
+    this.positionMobileControls();
+  }
+
+  private positionMobileControls(): void {
+    if (!this.mobileControls) return;
+    this.mobileControls.setPosition(0, 0);
+  }
+
+  shutdown(): void {
+    if (this.isShuttingDown) return;
+    this.isShuttingDown = true;
+    this.unsubscribeNetwork.forEach(unsub => unsub());
+    this.unsubscribeNetwork = [];
+    this.mobileControls?.destroy(true);
+    this.inputManager?.destroy();
+    this.fx?.destroy();
+    this.audio?.destroy();
+    this.scale.off("resize", this.positionMobileControls, this);
+    if (this.visibilityHandler) document.removeEventListener("visibilitychange", this.visibilityHandler);
   }
 }

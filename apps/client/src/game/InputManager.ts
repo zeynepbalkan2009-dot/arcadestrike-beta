@@ -40,9 +40,11 @@ export class InputManager {
   };
 
   private seq = 0;
+  private gamepadIndex: number | null = null;
 
   constructor(private scene: Phaser.Scene) {
     this.setupKeyboard();
+    this.setupGamepad();
   }
 
   private setupKeyboard(): void {
@@ -66,13 +68,18 @@ export class InputManager {
    */
   sample(): Omit<PlayerInput, "seq" | "tick" | "timestamp"> {
     const k = this.keys;
+    const pad = this.currentGamepad();
+    const axisX = pad?.axes.length ? pad.axes[0].getValue() : 0;
+    const padA = Boolean(pad?.buttons[0]?.pressed);
+    const padB = Boolean(pad?.buttons[1]?.pressed);
+    const padX = Boolean(pad?.buttons[2]?.pressed);
     return {
-      left:    k.left.isDown    || k.leftAlt.isDown    || this.touchState.left,
-      right:   k.right.isDown   || k.rightAlt.isDown   || this.touchState.right,
+      left:    k.left.isDown    || k.leftAlt.isDown    || axisX < -0.35 || this.touchState.left,
+      right:   k.right.isDown   || k.rightAlt.isDown   || axisX > 0.35  || this.touchState.right,
       jump:    Phaser.Input.Keyboard.JustDown(k.jump)   ||
-               Phaser.Input.Keyboard.JustDown(k.jumpAlt)|| this.touchState.jump,
-      attack:  Phaser.Input.Keyboard.JustDown(k.attack) || this.touchState.attack,
-      special: Phaser.Input.Keyboard.JustDown(k.special)|| this.touchState.special,
+               Phaser.Input.Keyboard.JustDown(k.jumpAlt)|| padA || this.touchState.jump,
+      attack:  Phaser.Input.Keyboard.JustDown(k.attack) || padX || this.touchState.attack,
+      special: Phaser.Input.Keyboard.JustDown(k.special)|| padB || this.touchState.special,
     };
   }
 
@@ -87,6 +94,25 @@ export class InputManager {
     this.touchState.jump    = false;
     this.touchState.attack  = false;
     this.touchState.special = false;
+  }
+
+  clearAllTouch(): void {
+    this.touchState.left = false;
+    this.touchState.right = false;
+    this.clearMomentary();
+  }
+
+  private setupGamepad(): void {
+    this.scene.input.gamepad?.once("connected", (pad: Phaser.Input.Gamepad.Gamepad) => {
+      this.gamepadIndex = pad.index;
+    });
+  }
+
+  private currentGamepad(): Phaser.Input.Gamepad.Gamepad | undefined {
+    const pads = this.scene.input.gamepad?.gamepads;
+    if (!pads?.length) return undefined;
+    if (this.gamepadIndex !== null) return pads.find(pad => pad?.index === this.gamepadIndex) ?? pads[0];
+    return pads[0];
   }
 
   /**

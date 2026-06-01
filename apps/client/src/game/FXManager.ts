@@ -18,6 +18,8 @@ export class FXManager {
   private musicVolume = 0.4;
   private bgm: Phaser.Sound.BaseSound | null = null;
   private isMuted = false;
+  private pooledTexts: Phaser.GameObjects.Text[] = [];
+  private pooledCircles: Phaser.GameObjects.Arc[] = [];
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -78,7 +80,7 @@ export class FXManager {
 
   // ─── Hit FX ──────────────────────────────────────────────────
 
-  spawnHitFX(x: number, y: number, isCombo: boolean): void {
+  spawnHitFX(x: number, y: number, isCombo: boolean, accentColor = 0xffffff): void {
     const scale = isCombo ? 1.4 : 1.0;
 
     try {
@@ -89,20 +91,29 @@ export class FXManager {
       fx.on("animationcomplete", () => fx.destroy());
     } catch {
       // Fallback: simple circle burst
-      this.spawnCircleBurst(x, y - 30, isCombo ? 0xffdd00 : 0xffffff, scale);
+      this.spawnCircleBurst(x, y - 30, isCombo ? 0xffdd00 : accentColor, scale);
     }
 
     if (isCombo) this.spawnComboFlash(x, y);
   }
 
   spawnDamageNumber(x: number, y: number, damage: number, isCombo: boolean, isHeavy: boolean): void {
-    const text = this.scene.add.text(x, y - 96, `-${damage}`, {
-      fontSize: isHeavy ? "26px" : isCombo ? "22px" : "18px",
-      color: isHeavy ? "#ff6644" : isCombo ? "#ffdd00" : "#ffffff",
-      fontFamily: "Courier New",
-      stroke: "#000000",
-      strokeThickness: 5,
-    }).setOrigin(0.5).setDepth(260).setScale(0.8);
+    const text = this.getPooledText();
+    text
+      .setPosition(x, y - 96)
+      .setText(`-${damage}`)
+      .setStyle({
+        fontSize: isHeavy ? "26px" : isCombo ? "22px" : "18px",
+        color: isHeavy ? "#ff6644" : isCombo ? "#ffdd00" : "#ffffff",
+        fontFamily: "Courier New",
+        stroke: "#000000",
+        strokeThickness: 5,
+      })
+      .setOrigin(0.5)
+      .setDepth(260)
+      .setScale(0.8)
+      .setAlpha(1)
+      .setVisible(true);
 
     this.scene.tweens.add({
       targets: text,
@@ -112,7 +123,7 @@ export class FXManager {
       scale: 1.15,
       duration: isHeavy ? 760 : 620,
       ease: "Cubic.Out",
-      onComplete: () => text.destroy(),
+      onComplete: () => this.releaseText(text),
     });
   }
 
@@ -170,7 +181,7 @@ export class FXManager {
     this.screenShake(300, 0.015);
   }
 
-  spawnSpecialFX(x: number, y: number): void {
+  spawnSpecialFX(x: number, y: number, accentColor = 0xaa44ff): void {
     try {
       const fx = this.scene.add.sprite(x, y - 20, "special_fx")
         .setScale(1.2)
@@ -178,7 +189,7 @@ export class FXManager {
       fx.play("special_fx");
       fx.on("animationcomplete", () => fx.destroy());
     } catch {
-      this.spawnCircleBurst(x, y - 20, 0xaa44ff, 1.8);
+      this.spawnCircleBurst(x, y - 20, accentColor, 1.8);
     }
   }
 
@@ -296,7 +307,7 @@ export class FXManager {
     for (let i = 0; i < count; i++) {
       const angle  = (i / count) * Math.PI * 2;
       const speed  = 70 + ((i * 37) % 48);
-      const circle = this.scene.add.circle(x, y, 4 * scale, color, 1).setDepth(100);
+      const circle = this.getPooledCircle(x, y, 4 * scale, color).setDepth(100);
 
       this.scene.tweens.add({
         targets:  circle,
@@ -306,7 +317,7 @@ export class FXManager {
         scale:    0,
         duration: 350 + ((i * 53) % 160),
         ease:     "Power2",
-        onComplete: () => circle.destroy(),
+        onComplete: () => this.releaseCircle(circle),
       });
     }
   }
@@ -322,5 +333,39 @@ export class FXManager {
 
   destroy(): void {
     this.stopBGM();
+    this.pooledTexts.forEach(text => text.destroy());
+    this.pooledCircles.forEach(circle => circle.destroy());
+    this.pooledTexts = [];
+    this.pooledCircles = [];
+  }
+
+  private getPooledText(): Phaser.GameObjects.Text {
+    return this.pooledTexts.pop() ?? this.scene.add.text(0, 0, "", {
+      fontFamily: "Courier New",
+      fontSize: "18px",
+      color: "#ffffff",
+    });
+  }
+
+  private releaseText(text: Phaser.GameObjects.Text): void {
+    text.setVisible(false).setAlpha(0);
+    this.pooledTexts.push(text);
+  }
+
+  private getPooledCircle(x: number, y: number, radius: number, color: number): Phaser.GameObjects.Arc {
+    const circle = this.pooledCircles.pop() ?? this.scene.add.circle(x, y, radius, color, 1);
+    circle
+      .setPosition(x, y)
+      .setRadius(radius)
+      .setFillStyle(color, 1)
+      .setScale(1)
+      .setAlpha(1)
+      .setVisible(true);
+    return circle;
+  }
+
+  private releaseCircle(circle: Phaser.GameObjects.Arc): void {
+    circle.setVisible(false).setAlpha(0);
+    this.pooledCircles.push(circle);
   }
 }

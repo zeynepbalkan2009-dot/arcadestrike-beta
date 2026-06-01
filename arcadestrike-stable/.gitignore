@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Prisma
+apps/server/prisma/migrations/
+!apps/server/prisma/migrations/.gitkeep
+
+# Environment files - NEVER commit these
+.env
+.env.local
+.env.*.local
+apps/server/.env
+apps/client/.env
+
+# Logs
+*.log
+logs/
+dev.err.log
+dev.out.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Turbo
+.turbo/
+
+# Coverage
+coverage/

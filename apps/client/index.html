@@ -7,8 +7,10 @@
   <meta name="description" content="1v1 Web3 PvP Fighting Game" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #0a0a0f; overflow: hidden; font-family: 'Courier New', monospace; }
-    #game-container { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+    html, body { width: 100%; height: 100%; touch-action: none; overscroll-behavior: none; }
+    body { background: #0a0a0f; overflow: hidden; font-family: 'Courier New', monospace; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+    #game-container { width: 100vw; height: 100dvh; display: flex; align-items: center; justify-content: center; }
+    canvas { image-rendering: pixelated; outline: none; }
     #ui-overlay {
       position: fixed; top: 0; left: 0; right: 0; bottom: 0;
       pointer-events: none; z-index: 100;
@@ -24,6 +26,21 @@
     #wallet-panel {
       position: fixed; top: 16px; right: 16px;
       pointer-events: all;
+    }
+    #fatal-overlay {
+      position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center;
+      background: rgba(4, 4, 12, 0.86); color: #fff;
+    }
+    .fatal-panel {
+      width: min(420px, calc(100vw - 32px)); border: 2px solid #34f7ff;
+      background: #080914; padding: 18px; display: grid; gap: 12px;
+      box-shadow: 0 0 28px rgba(52,247,255,0.32);
+    }
+    .fatal-panel strong { color: #34f7ff; font-size: 18px; }
+    .fatal-panel span { color: #d7f9ff; font-size: 12px; line-height: 1.4; }
+    .fatal-panel button {
+      justify-self: start; background: #00ff88; color: #02030a; border: 0;
+      padding: 8px 14px; font-family: inherit; font-weight: 700; cursor: pointer;
     }
   </style>
 </head>

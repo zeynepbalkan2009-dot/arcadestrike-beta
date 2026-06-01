@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: arcadestrike_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/arcadestrike_test
+
+      - name: Run migrations
+        run: npm run prisma:migrate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/arcadestrike_test
+
+      - name: Build server
+        run: npm run build:server
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/arcadestrike_test
+
+      - name: Build client
+        run: npm run build:client

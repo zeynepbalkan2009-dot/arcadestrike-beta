@@ -1,4 +1,4 @@
-generator client {
+﻿generator client {
   provider = "prisma-client-js"
 }
 
@@ -58,7 +58,6 @@ model Wallet {
   dailyLossDate     String
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
-
   ledgerEntries LedgerEntry[]
   withdrawals   Withdrawal[]
   auditLogs     AuditLog[]
@@ -77,10 +76,8 @@ model LedgerEntry {
   idempotencyKey String?
   metadata       Json?
   createdAt      DateTime         @default(now())
-
-  wallet Wallet @relation(fields: [playerId], references: [playerId], onDelete: Cascade)
+  wallet    Wallet     @relation(fields: [playerId], references: [playerId], onDelete: Cascade)
   auditLogs AuditLog[]
-
   @@index([playerId, createdAt])
   @@index([matchId])
   @@index([txHash])
@@ -104,12 +101,10 @@ model Withdrawal {
   processingAt   DateTime?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
-
-  wallet Wallet @relation(fields: [playerId], references: [playerId], onDelete: Cascade)
-  auditLogs AuditLog[]
-  fraudEvents FraudEvent[]
-  attemptsLog WithdrawalAttempt[]
-
+  wallet       Wallet              @relation(fields: [playerId], references: [playerId], onDelete: Cascade)
+  auditLogs    AuditLog[]
+  fraudEvents  FraudEvent[]
+  attemptsLog  WithdrawalAttempt[]
   @@index([playerId, createdAt])
   @@index([status])
   @@index([status, nextAttemptAt])
@@ -124,7 +119,6 @@ model MatchSettlement {
   payout      Decimal          @db.Decimal(78, 0)
   fee         Decimal          @db.Decimal(78, 0)
   createdAt   DateTime         @default(now())
-
   @@index([winnerId, createdAt])
   @@index([loserId, createdAt])
 }
@@ -142,11 +136,9 @@ model AuditLog {
   afterPromo    Decimal?    @db.Decimal(78, 0)
   metadata      Json?
   createdAt     DateTime    @default(now())
-
   wallet      Wallet?      @relation(fields: [playerId], references: [playerId], onDelete: SetNull)
   ledgerEntry LedgerEntry? @relation(fields: [ledgerEntryId], references: [id], onDelete: SetNull)
   withdrawal  Withdrawal?  @relation(fields: [withdrawalId], references: [id], onDelete: SetNull)
-
   @@index([playerId, createdAt])
   @@index([ledgerEntryId])
   @@index([withdrawalId])
@@ -162,10 +154,8 @@ model FraudEvent {
   withdrawalId String?
   metadata     Json?
   createdAt    DateTime       @default(now())
-
   wallet     Wallet?     @relation(fields: [playerId], references: [playerId], onDelete: SetNull)
   withdrawal Withdrawal? @relation(fields: [withdrawalId], references: [id], onDelete: SetNull)
-
   @@index([playerId, createdAt])
   @@index([type, createdAt])
   @@index([matchId])
@@ -180,7 +170,6 @@ model ReplayInput {
   tick      Int
   payload   Json
   createdAt DateTime @default(now())
-
   @@unique([matchId, playerId, seq])
   @@index([matchId, tick])
   @@index([playerId, createdAt])
@@ -195,24 +184,21 @@ model MatchEvent {
   correlationId String?
   payload       Json?
   createdAt     DateTime @default(now())
-
   @@index([matchId, tick])
   @@index([correlationId])
   @@index([type, createdAt])
 }
 
 model WithdrawalAttempt {
-  id           String   @id @default(cuid())
+  id           String           @id @default(cuid())
   withdrawalId String
   status       WithdrawalStatus
   attempt      Int
   txHash       String?
   error        String?
   workerId     String?
-  createdAt    DateTime @default(now())
-
+  createdAt    DateTime         @default(now())
   withdrawal Withdrawal @relation(fields: [withdrawalId], references: [id], onDelete: Cascade)
-
   @@index([withdrawalId, createdAt])
   @@index([status, createdAt])
 }

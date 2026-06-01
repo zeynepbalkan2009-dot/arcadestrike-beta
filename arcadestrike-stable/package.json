@@ -1,0 +1,26 @@
+{
+  "name": "arcadestrike",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c cyan,yellow \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "npm run dev --workspace=apps/server",
+    "dev:client": "npm run dev --workspace=apps/client",
+    "build": "npm run build --workspace=apps/server && npm run build --workspace=apps/client",
+    "build:server": "npm run build --workspace=apps/server",
+    "build:client": "npm run build --workspace=apps/client",
+    "start": "npm run start --workspace=apps/server",
+    "prisma:generate": "npm run prisma:generate --workspace=apps/server",
+    "prisma:migrate": "npm run prisma:migrate --workspace=apps/server",
+    "prisma:migrate:dev": "npm run prisma:migrate:dev --workspace=apps/server",
+    "prisma:studio": "npm run prisma:studio --workspace=apps/server"
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}

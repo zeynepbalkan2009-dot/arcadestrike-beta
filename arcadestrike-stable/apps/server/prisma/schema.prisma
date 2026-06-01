@@ -1,0 +1,218 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum LedgerCreditType {
+  REAL
+  PROMO
+}
+
+enum LedgerEntryType {
+  DEPOSIT
+  WITHDRAWAL
+  PROMO_AWARD
+  WAGER_LOCK
+  WAGER_REFUND
+  MATCH_PAYOUT
+  MATCH_LOSS
+  FEE
+}
+
+enum WithdrawalStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  RETRYING
+}
+
+enum AuditAction {
+  BALANCE_MUTATION
+  DAILY_LOSS_RESET
+  WITHDRAWAL_CREATED
+  MATCH_SETTLED
+  FRAUD_EVENT
+}
+
+enum FraudEventType {
+  DUPLICATE_DEPOSIT
+  DUPLICATE_WITHDRAWAL
+  DUPLICATE_MATCH_SETTLEMENT
+  INSUFFICIENT_BALANCE
+  DAILY_LIMIT_EXCEEDED
+  LEDGER_BALANCE_MISMATCH
+}
+
+model Wallet {
+  playerId          String   @id
+  realCredits       Decimal  @default(0) @db.Decimal(78, 0)
+  promoCredits      Decimal  @default(0) @db.Decimal(78, 0)
+  dailyLossUsed     Decimal  @default(0) @db.Decimal(78, 0)
+  dailyLossReserved Decimal  @default(0) @db.Decimal(78, 0)
+  dailyLossDate     String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  ledgerEntries LedgerEntry[]
+  withdrawals   Withdrawal[]
+  auditLogs     AuditLog[]
+  fraudEvents   FraudEvent[]
+}
+
+model LedgerEntry {
+  id             String           @id @default(cuid())
+  playerId       String
+  type           LedgerEntryType
+  creditType     LedgerCreditType
+  amount         Decimal          @db.Decimal(78, 0)
+  balanceAfter   Decimal          @db.Decimal(78, 0)
+  matchId        String?
+  txHash         String?
+  idempotencyKey String?
+  metadata       Json?
+  createdAt      DateTime         @default(now())
+
+  wallet    Wallet     @relation(fields: [playerId], references: [playerId], onDelete: Cascade)
+  auditLogs AuditLog[]
+
+  @@index([playerId, createdAt])
+  @@index([matchId])
+  @@index([txHash])
+  @@unique([txHash, type])
+  @@unique([playerId, idempotencyKey])
+  @@unique([playerId, matchId, type])
+}
+
+model Withdrawal {
+  id             String           @id @default(cuid())
+  playerId       String
+  amount         Decimal          @db.Decimal(78, 0)
+  toAddress      String
+  status         WithdrawalStatus @default(QUEUED)
+  txHash         String?
+  idempotencyKey String           @unique
+  attempts       Int              @default(0)
+  nextAttemptAt  DateTime?
+  lastError      String?
+  processingBy   String?
+  processingAt   DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  wallet       Wallet              @relation(fields: [playerId], references: [playerId], onDelete: Cascade)
+  auditLogs    AuditLog[]
+  fraudEvents  FraudEvent[]
+  attemptsLog  WithdrawalAttempt[]
+
+  @@index([playerId, createdAt])
+  @@index([status])
+  @@index([status, nextAttemptAt])
+}
+
+model MatchSettlement {
+  matchId     String           @id
+  winnerId    String
+  loserId     String
+  wagerAmount Decimal          @db.Decimal(78, 0)
+  currency    LedgerCreditType
+  payout      Decimal          @db.Decimal(78, 0)
+  fee         Decimal          @db.Decimal(78, 0)
+  createdAt   DateTime         @default(now())
+
+  @@index([winnerId, createdAt])
+  @@index([loserId, createdAt])
+}
+
+model AuditLog {
+  id            String      @id @default(cuid())
+  playerId      String?
+  action        AuditAction
+  ledgerEntryId String?
+  withdrawalId  String?
+  matchId       String?
+  beforeReal    Decimal?    @db.Decimal(78, 0)
+  afterReal     Decimal?    @db.Decimal(78, 0)
+  beforePromo   Decimal?    @db.Decimal(78, 0)
+  afterPromo    Decimal?    @db.Decimal(78, 0)
+  metadata      Json?
+  createdAt     DateTime    @default(now())
+
+  wallet      Wallet?      @relation(fields: [playerId], references: [playerId], onDelete: SetNull)
+  ledgerEntry LedgerEntry? @relation(fields: [ledgerEntryId], references: [id], onDelete: SetNull)
+  withdrawal  Withdrawal?  @relation(fields: [withdrawalId], references: [id], onDelete: SetNull)
+
+  @@index([playerId, createdAt])
+  @@index([ledgerEntryId])
+  @@index([withdrawalId])
+  @@index([matchId])
+}
+
+model FraudEvent {
+  id           String         @id @default(cuid())
+  playerId     String?
+  type         FraudEventType
+  severity     String
+  matchId      String?
+  withdrawalId String?
+  metadata     Json?
+  createdAt    DateTime       @default(now())
+
+  wallet     Wallet?     @relation(fields: [playerId], references: [playerId], onDelete: SetNull)
+  withdrawal Withdrawal? @relation(fields: [withdrawalId], references: [id], onDelete: SetNull)
+
+  @@index([playerId, createdAt])
+  @@index([type, createdAt])
+  @@index([matchId])
+  @@index([withdrawalId])
+}
+
+model ReplayInput {
+  id        String   @id @default(cuid())
+  matchId   String
+  playerId  String
+  seq       Int
+  tick      Int
+  payload   Json
+  createdAt DateTime @default(now())
+
+  @@unique([matchId, playerId, seq])
+  @@index([matchId, tick])
+  @@index([playerId, createdAt])
+}
+
+model MatchEvent {
+  id            String   @id @default(cuid())
+  matchId       String
+  tick          Int
+  type          String
+  playerId      String?
+  correlationId String?
+  payload       Json?
+  createdAt     DateTime @default(now())
+
+  @@index([matchId, tick])
+  @@index([correlationId])
+  @@index([type, createdAt])
+}
+
+model WithdrawalAttempt {
+  id           String           @id @default(cuid())
+  withdrawalId String
+  status       WithdrawalStatus
+  attempt      Int
+  txHash       String?
+  error        String?
+  workerId     String?
+  createdAt    DateTime         @default(now())
+
+  withdrawal Withdrawal @relation(fields: [withdrawalId], references: [id], onDelete: Cascade)
+
+  @@index([withdrawalId, createdAt])
+  @@index([status, createdAt])
+}

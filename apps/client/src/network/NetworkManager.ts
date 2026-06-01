@@ -32,6 +32,8 @@ export class NetworkManager {
   private room: Room | null = null;
   private handlers = new Map<string, Set<MessageHandler>>();
   private sendQueue: C2SMessage[] = [];
+  private inputSentAt = new Map<number, number>();
+  private latencyMs = 0;
   private playerId = "";
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -56,6 +58,10 @@ export class NetworkManager {
 
   getPlayerId(): string {
     return this.playerId || this.room?.sessionId || "";
+  }
+
+  getLatencyMs(): number {
+    return this.latencyMs;
   }
 
   /**
@@ -144,6 +150,11 @@ export class NetworkManager {
   // ─── Typed Send Methods ─────────────────────────────────────
 
   sendInput(input: PlayerInput): void {
+    this.inputSentAt.set(input.seq, performance.now());
+    if (this.inputSentAt.size > 64) {
+      const oldest = Math.min(...this.inputSentAt.keys());
+      this.inputSentAt.delete(oldest);
+    }
     this.send({ type: "INPUT", payload: input });
   }
 
@@ -244,7 +255,18 @@ export class NetworkManager {
     ];
 
     for (const type of messageTypes) {
-      this.room.onMessage(type, (payload: any) => this.emit(type, payload));
+      this.room.onMessage(type, (payload: any) => {
+        if (type === "INPUT_ACK" && typeof payload?.seq === "number") {
+          const sentAt = this.inputSentAt.get(payload.seq);
+          if (sentAt !== undefined) {
+            const sample = performance.now() - sentAt;
+            this.latencyMs = this.latencyMs === 0 ? sample : this.latencyMs * 0.82 + sample * 0.18;
+            this.inputSentAt.delete(payload.seq);
+            this.emit("LATENCY", { latencyMs: this.latencyMs });
+          }
+        }
+        this.emit(type, payload);
+      });
     }
 
     this.room.onError((code, message) => {

@@ -44,6 +44,8 @@ export class HUD {
   private timerText!: Phaser.GameObjects.Text;
   private wagerText!: Phaser.GameObjects.Text;
   private roundText!: Phaser.GameObjects.Text;
+  private latencyText!: Phaser.GameObjects.Text;
+  private reconnectBanner?: Phaser.GameObjects.Container;
 
   // Round dots
   private p1Dots: Phaser.GameObjects.Arc[] = [];
@@ -58,6 +60,8 @@ export class HUD {
   private lossWarningBanner!: Phaser.GameObjects.Container;
   private myPlayerId = "";
   private wagerAmount = "";
+  private lowHealthPulse?: Phaser.Tweens.Tween;
+  private lastHudKey = "";
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -135,6 +139,10 @@ export class HUD {
     this.connIcon = this.scene.add.text(width - 16, 8, "●", {
       fontSize: "12px", color: "#00ff88", fontFamily: "Courier New",
     }).setOrigin(1, 0).setDepth(52);
+
+    this.latencyText = this.scene.add.text(width - 34, 24, "--ms", {
+      fontSize: "10px", color: "#888888", fontFamily: "Courier New",
+    }).setOrigin(1, 0).setDepth(52);
   }
 
   // ─── Per-frame update ────────────────────────────────────────
@@ -148,6 +156,18 @@ export class HUD {
     const opp = fighters.find(f => f.playerId !== myPlayerId);
     if (!me || !opp) return;
 
+    const hudKey = [
+      Math.ceil(me.hp),
+      Math.ceil(opp.hp),
+      me.attackCooldown,
+      me.specialCooldown,
+      state.matchTimer,
+      state.phase,
+      state.scores[myPlayerId] || 0,
+    ].join("|");
+    if (hudKey === this.lastHudKey) return;
+    this.lastHudKey = hudKey;
+
     // ─── HP bars ─────────────────────────────────────────────
     const p1Pct = Math.max(0, me.hp  / C.MAX_HP);
     const p2Pct = Math.max(0, opp.hp / C.MAX_HP);
@@ -158,6 +178,7 @@ export class HUD {
     // Colour gradient: green → yellow → red
     this.p1HpFill.setFillStyle(this.hpColor(p1Pct));
     this.p2HpFill.setFillStyle(this.hpColor(p2Pct));
+    this.updateLowHealthPulse(p1Pct);
 
     this.p1HpText.setText(Math.ceil(me.hp).toString());
     this.p2HpText.setText(Math.ceil(opp.hp).toString());
@@ -176,6 +197,8 @@ export class HUD {
     const spcPct = me.specialCooldown > 0 ? 1 - (me.specialCooldown / C.SPECIAL_COOLDOWN_TICKS) : 1;
     this.atkCdBar.width = 80 * atkPct;
     this.spcCdBar.width = 80 * spcPct;
+    this.atkCdBar.setFillStyle(atkPct >= 1 ? 0x00ff88 : 0x00aaff);
+    this.spcCdBar.setFillStyle(spcPct >= 1 ? 0xffdd00 : 0xaa44ff);
 
     // ─── Round scores ────────────────────────────────────────
     const myScore = state.scores[myPlayerId] || 0;
@@ -192,6 +215,39 @@ export class HUD {
   setConnectionStatus(connected: boolean): void {
     this.connIcon.setColor(connected ? "#00ff88" : "#ff4444");
     this.connIcon.setText(connected ? "●" : "⚠");
+    if (connected) this.hideReconnectBanner();
+    else this.showReconnectBanner("RECONNECTING...");
+  }
+
+  setLatency(ms: number): void {
+    const rounded = Math.max(0, Math.round(ms));
+    this.latencyText.setText(`${rounded}ms`);
+    this.latencyText.setColor(rounded < 80 ? "#00ff88" : rounded < 140 ? "#ffdd00" : "#ff4444");
+  }
+
+  showReconnectBanner(message: string): void {
+    if (this.reconnectBanner) {
+      const text = this.reconnectBanner.getByName("text") as Phaser.GameObjects.Text | null;
+      text?.setText(message);
+      return;
+    }
+
+    const { width } = this.scene.scale;
+    const banner = this.scene.add.container(width / 2, 78).setDepth(320);
+    const bg = this.scene.add.rectangle(0, 0, 260, 30, 0x220000, 0.9)
+      .setStrokeStyle(1, 0xff4444);
+    const txt = this.scene.add.text(0, 0, message, {
+      fontSize: "12px",
+      color: "#ff8888",
+      fontFamily: "Courier New",
+    }).setOrigin(0.5).setName("text");
+    banner.add([bg, txt]);
+    this.reconnectBanner = banner;
+  }
+
+  hideReconnectBanner(): void {
+    this.reconnectBanner?.destroy(true);
+    this.reconnectBanner = undefined;
   }
 
   showDailyLossWarning(remaining: string): void {
@@ -224,5 +280,22 @@ export class HUD {
     if (pct > 0.6) return 0x00dd55;
     if (pct > 0.3) return 0xddaa00;
     return 0xdd2222;
+  }
+
+  private updateLowHealthPulse(pct: number): void {
+    if (pct <= 0.25 && !this.lowHealthPulse) {
+      this.lowHealthPulse = this.scene.tweens.add({
+        targets: this.p1HpFill,
+        alpha: 0.45,
+        yoyo: true,
+        repeat: -1,
+        duration: 260,
+      });
+    }
+    if (pct > 0.25 && this.lowHealthPulse) {
+      this.lowHealthPulse.stop();
+      this.lowHealthPulse = undefined;
+      this.p1HpFill.setAlpha(1);
+    }
   }
 }
